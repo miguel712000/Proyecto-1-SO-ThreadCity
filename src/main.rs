@@ -1,3 +1,6 @@
+mod mypthreads;
+mod scheduler;
+
 fn main() {
-    println!("Hello, world!");
+    println!("Thread City – esqueleto listo");
 }
