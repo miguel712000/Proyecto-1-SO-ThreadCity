@@ -1,6 +1,7 @@
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
+//use std::time::{SystemTime, UNIX_EPOCH};  //Importa tipos del módulo estándar de tiempo en Rust.
 use crate::scheduler;
+use once_cell::sync::Lazy;
 
 // =========================
 // Tipos básicos y estados
@@ -40,7 +41,12 @@ pub struct ThreadControlBlock {
     pub scheduler_type: SchedulerType,
     /// Si es `true`, el hilo no se puede esperar (`join`), como en `pthread_detach`.
     pub detached: bool,
-    // TODO: contexto real (ucontext_t equivalente)
+
+    // Metadatos de scheduling
+    pub tickets: u32, // para Lottery (>=1)
+    pub deadline_ms: Option<u64>, // para RT (epoch ms); None si no aplica
+
+                      // TODO: contexto real (ucontext_t equivalente)
 }
 
 // =========================
@@ -52,15 +58,12 @@ const MAX_THREADS: usize = 64;
 
 /// Tabla global donde se guardan **todos** los hilos creados.
 /// Se protege con `Mutex` porque todos los hilos van a tocarla.
-static THREAD_TABLE: Lazy<Mutex<Vec<ThreadControlBlock>>> = Lazy::new(|| {
-    Mutex::new(Vec::with_capacity(MAX_THREADS))
-});
+static THREAD_TABLE: Lazy<Mutex<Vec<ThreadControlBlock>>> =
+    Lazy::new(|| Mutex::new(Vec::with_capacity(MAX_THREADS)));
 
 /// ID del hilo que está actualmente en ejecución.
 /// Si es `None` significa que no hay hilo corriendo (por ejemplo, ya terminaron todos).
-static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| {
-    Mutex::new(None)
-});
+static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| Mutex::new(None));
 
 // =========================
 // Funciones de hilos
@@ -72,7 +75,7 @@ static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| {
 /// - `scheduler_type`: con qué scheduler se va a planificar este hilo.
 ///
 /// Devuelve el ID del hilo creado o un error si se alcanzó el máximo.
-/// 
+///
 /// ```rust
 /// use proyecto1::mypthreads::{my_thread_create, SchedulerType};
 ///
@@ -85,7 +88,7 @@ static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| {
 /// }
 /// ```
 pub fn my_thread_create(
-    _start_routine: fn(),            // por ahora función sin args
+    _start_routine: fn(), // por ahora función sin args
     scheduler_type: SchedulerType,
 ) -> Result<MyThreadId, &'static str> {
     let mut table = THREAD_TABLE.lock().unwrap();
@@ -102,6 +105,10 @@ pub fn my_thread_create(
         waiting_thread_id: None,
         scheduler_type,
         detached: false,
+
+        // Defaults de las propiedades para schedule
+        tickets: 1,
+        deadline_ms: None,
     };
 
     // Guardamos el hilo en la tabla global
@@ -258,5 +265,50 @@ pub fn my_thread_chsched(tid: MyThreadId, new_sched: SchedulerType) -> Result<()
         return Err("thread does not exist");
     }
     table[tid].scheduler_type = new_sched;
+    Ok(())
+}
+
+// Acceso controlado a la tabla global de hilos (`THREAD_TABLE`).
+// Estas funciones encapsulan el uso del `Mutex` que protege la tabla,
+// permitiendo ejecutar un cierre (`closure`) con acceso seguro a los TCB:
+
+/// Otorga **solo lectura** (`&[ThreadControlBlock]`).
+pub(crate) fn with_threads<R>(f: impl FnOnce(&[ThreadControlBlock]) -> R) -> R {
+    let table = THREAD_TABLE.lock().unwrap();
+    f(&table)
+}
+
+/*
+/// Otorga **lectura y escritura** (`&mut [ThreadControlBlock]`).
+pub(crate) fn with_threads_mut<R>(f: impl FnOnce(&mut [ThreadControlBlock]) -> R) -> R {
+    let mut table = THREAD_TABLE.lock().unwrap();
+    f(&mut table)
+}
+ */
+
+/// Ajusta la cantidad de tickets para Lottery del hilo `tid`.
+pub fn my_thread_set_tickets(tid: MyThreadId, tickets: u32) -> Result<(), &'static str> {
+    if tickets == 0 {
+        return Err("tickets must be >= 1");
+    }
+    let mut table = THREAD_TABLE.lock().unwrap();
+    if tid >= table.len() {
+        return Err("thread does not exist");
+    }
+    table[tid].tickets = tickets;
+    Ok(())
+}
+
+/// Ajusta el deadline (en ms desde epoch) para RT del hilo `tid`.
+/// Usa `None` para limpiar/eliminar el deadline.
+pub fn my_thread_set_deadline_ms(
+    tid: MyThreadId,
+    deadline_ms: Option<u64>,
+) -> Result<(), &'static str> {
+    let mut table = THREAD_TABLE.lock().unwrap();
+    if tid >= table.len() {
+        return Err("thread does not exist");
+    }
+    table[tid].deadline_ms = deadline_ms;
     Ok(())
 }
