@@ -118,6 +118,35 @@ fn main() {
     println!("  - lot2 (más tickets) salga más veces que lot1.");
     println!("  - hilos RR casi no aparezcan (Lottery tiene prioridad sobre RR).");
 
+    // Bloquear o marcar como Finished los hilos de Lottery
+    with_threads_mut(|table| {
+        // ojo: usá los tid correctos de lot1 y lot2
+        table[lot1].state = ThreadState::Blocked;
+        table[lot2].state = ThreadState::Blocked;
+    });
+
+    println!("\n----------------------------------------");
+    println!("FASE 3: Sin RT ni Lottery, SOLO Round Robin");
+    println!("----------------------------------------");
+
+    //Ahora el scheduler solo tiene RR en READY
+    for i in 0..10 {
+        if let Some(tid) = scheduler::scheduler_next() {
+            with_threads(|table| {
+                let t = &table[tid];
+                /*println!(
+                    "  iter {:02}: scheduler_next() → tid={} type={:?}",
+                    i, tid, t.scheduler_type
+                );*/
+                if let Some(f) = t.start_routine {
+                    f(); // ejecutamos la función dummy del hilo RR
+                }
+            });
+        } else {
+            println!("  iter {:02}: scheduler_next() → None (no hay hilos READY)", i);
+        }
+    }
+
     println!("\nDemo terminada.");
 }
 
