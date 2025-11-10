@@ -274,22 +274,28 @@ pub fn my_thread_chsched(tid: MyThreadId, new_sched: SchedulerType) -> Result<()
 }
 
 // Acceso controlado a la tabla global de hilos (`THREAD_TABLE`).
-// Estas funciones encapsulan el uso del `Mutex` que protege la tabla,
+// Estas funciones encapsulan el uso del `Mutexegúrate que existan estos campos (además de los otros que ya ten` que protege la tabla,
 // permitiendo ejecutar un cierre (`closure`) con acceso seguro a los TCB:
 
 /// Otorga **solo lectura** (`&[ThreadControlBlock]`).
-pub(crate) fn with_threads<R>(f: impl FnOnce(&[ThreadControlBlock]) -> R) -> R {
+pub fn with_threads<F, R>(f: F) -> R
+where
+    F: FnOnce(&Vec<ThreadControlBlock>) -> R,
+{
     let table = THREAD_TABLE.lock().unwrap();
-    f(&table)
+    f(&*table)
 }
 
-/*
-/// Otorga **lectura y escritura** (`&mut [ThreadControlBlock]`).
-pub(crate) fn with_threads_mut<R>(f: impl FnOnce(&mut [ThreadControlBlock]) -> R) -> R {
+/// Ejecuta una función con acceso mutable a la tabla de hilos.
+///
+/// Útil para pruebas o para ajustar metadatos de scheduling (tickets, deadlines, etc.).
+pub fn with_threads_mut<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Vec<ThreadControlBlock>) -> R,
+{
     let mut table = THREAD_TABLE.lock().unwrap();
-    f(&mut table)
+    f(&mut *table)
 }
- */
 
 /// Ajusta la cantidad de tickets para Lottery del hilo `tid`.
 pub fn my_thread_set_tickets(tid: MyThreadId, tickets: u32) -> Result<(), &'static str> {
