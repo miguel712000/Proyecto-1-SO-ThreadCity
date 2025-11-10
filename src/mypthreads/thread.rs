@@ -39,8 +39,11 @@ pub struct ThreadControlBlock {
     pub waiting_thread_id: Option<MyThreadId>,
     /// Qué scheduler se debe usar para este hilo.
     pub scheduler_type: SchedulerType,
-    /// Si es `true`, el hilo no se puede esperar (`join`), como en `pthread_detach`.
+    /// Si es `true`, el hilo no se puede esperar (`join`).
     pub detached: bool,
+    /// Función que este hilo debe ejecutar cuando se le asigne CPU.
+    pub start_routine: Option<fn()>,
+    // TODO: contexto real más adelante
 
     // Metadatos de scheduling
     pub tickets: u32, // para Lottery (>=1)
@@ -88,7 +91,7 @@ static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| Mutex::
 /// }
 /// ```
 pub fn my_thread_create(
-    _start_routine: fn(), // por ahora función sin args
+    start_routine: fn(), // por ahora función sin args
     scheduler_type: SchedulerType,
 ) -> Result<MyThreadId, &'static str> {
     let mut table = THREAD_TABLE.lock().unwrap();
@@ -105,6 +108,8 @@ pub fn my_thread_create(
         waiting_thread_id: None,
         scheduler_type,
         detached: false,
+        start_routine: Some(start_routine),
+
 
         // Defaults de las propiedades para schedule
         tickets: 1,
@@ -311,4 +316,24 @@ pub fn my_thread_set_deadline_ms(
     }
     table[tid].deadline_ms = deadline_ms;
     Ok(())
+}
+
+/// Ejecuta la función asociada al hilo `tid`, si existe.
+/// 
+/// Por ahora esto ejecuta la función de forma síncrona (sin cambio de contexto real),
+/// lo cual es suficiente para una simulación cooperativa básica.
+pub fn my_thread_run_once(tid: MyThreadId) {
+    let maybe_func = {
+        let table = THREAD_TABLE.lock().unwrap();
+        if let Some(tcb) = table.get(tid) {
+            tcb.start_routine
+        } else {
+            None
+        }
+    };
+
+    if let Some(f) = maybe_func {
+        // Aquí podríamos marcar RUNNING antes, FINISHED después, etc.
+        f();
+    }
 }
