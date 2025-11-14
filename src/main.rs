@@ -1,3 +1,5 @@
+mod gui; // 
+
 use proyecto1::threadcity::city::City;
 use proyecto1::threadcity::entities::VehicleType;
 use proyecto1::mypthreads::{
@@ -10,12 +12,12 @@ use proyecto1::mypthreads::{
 use proyecto1::scheduler;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::thread::sleep;
+use std::thread::{self, sleep};
+use crate::gui::{run_gui, SharedCity};
 
+fn run_simulation(city: SharedCity) {
+    // === LO QUE YA TENÍAS EN main, movido aquí ===
 
-fn main() {
-    // Crear ciudad compartida dentro de Arc<Mutex<...>>
-    let city = Arc::new(Mutex::new(City::new(5, 5))); // 5x5 grid, very small
     {
         let c = city.lock().unwrap();
         println!("=== Estado inicial de la ciudad ===");
@@ -55,7 +57,28 @@ let _car_thread = my_thread_create(
                 if done {
                     println!("🚗 El Auto llegó a su destino ✅");
                     break;
+    // Crear un hilo simulado del tipo "Auto" usando mypthreads
+    let city_clone: Arc<Mutex<City>> = Arc::clone(&city);
+    let _car_thread = my_thread_create(
+        move || {
+            for step_count in 0..20 {
+                {
+                    let mut c = city_clone.lock().unwrap();
+
+                    // Pequeña lógica de puente
+                    if step_count == 5 {
+                        c.cross_bridge(VehicleType::Car, 1);
+                    }
+
+                    let done = c.step();
+                    c.print_state();
+
+                    if done {
+                        println!("🚗 El Auto llegó a su destino ✅");
+                        break;
+                    }
                 }
+                std::thread::sleep(Duration::from_millis(300));
             }
             std::thread::sleep(Duration::from_millis(300));
         }
@@ -84,7 +107,23 @@ let _car_thread = my_thread_create(
             println!("🏁 Todos los vehículos llegaron, fin de la simulación.");
             break;
         }
+
         sleep(Duration::from_millis(100));
     }
+
     println!("Simulation finished.");
+}
+
+fn main() {
+    // Crear ciudad compartida
+    let city: SharedCity = Arc::new(Mutex::new(City::new(5, 5)));
+
+    // Lanzar la simulación en un hilo del SO
+    let city_for_sim = city.clone();
+    thread::spawn(move || {
+        run_simulation(city_for_sim);
+    });
+
+    // Lanzar la GUI GTK en el hilo principal
+    run_gui(city);
 }

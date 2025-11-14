@@ -277,5 +277,10 @@ pub fn cross_bridge(&self, vehicle_type: VehicleType, bridge_id: usize, tid: MyT
     }
 }
 
+    /// Devuelve una copia del estado actual para que la GUI pueda dibujar.
+    pub fn snapshot(&self) -> (usize, usize, Vec<Vehicle>) {
+        (self.width, self.height, self.vehicles.clone())
+    }
+
 }
 
