@@ -110,7 +110,6 @@ pub fn my_thread_create(
         detached: false,
         start_routine: Some(start_routine),
 
-
         // Defaults de las propiedades para schedule
         tickets: 1,
         deadline_ms: None,
@@ -286,6 +285,7 @@ where
     f(&*table)
 }
 
+
 /// Ejecuta una función con acceso mutable a la tabla de hilos.
 ///
 /// Útil para pruebas o para ajustar metadatos de scheduling (tickets, deadlines, etc.).
@@ -325,7 +325,7 @@ pub fn my_thread_set_deadline_ms(
 }
 
 /// Ejecuta la función asociada al hilo `tid`, si existe.
-/// 
+///
 /// Por ahora esto ejecuta la función de forma síncrona (sin cambio de contexto real),
 /// lo cual es suficiente para una simulación cooperativa básica.
 pub fn my_thread_run_once(tid: MyThreadId) {

@@ -78,6 +78,25 @@ fn main() {
     println!("FASE 2: Sin RT, con Lottery + RR");
     println!("----------------------------------------");
 
+   // Forzar deadline vencido del RT (tid=0 según tu print) y disparar un ciclo
+    with_threads_mut(|tab| { tab[0].deadline_ms = Some(0); });
+    let _ = scheduler::scheduler_next();
+    println!("[TEST] plant_exploded? {}", scheduler::plant_exploded());
+
+    
+
+
+
+    // --- TEST A: bajar lot1 de Lottery a RR (deprioriza a lot1 en esta fase) ---
+    proyecto1::mypthreads::my_thread_chsched(lot1, SchedulerType::RoundRobin).unwrap();
+    println!("[TEST] lot1 -> RoundRobin (debería casi desaparecer del sorteo)");
+
+    // --- TEST B: promover rr1 a Lottery con muchos tickets (debe empezar a ganar) ---
+    with_threads_mut(|tab| { tab[rr1].tickets = 20; });
+    proyecto1::mypthreads::my_thread_chsched(rr1, SchedulerType::Lottery).unwrap();
+    println!("[TEST] rr1 -> Lottery con 20 tickets (debería aparecer mucho en el sorteo)");
+
+    
     // Vamos a llamar muchas veces a scheduler_next para ver la tendencia Lottery.
     let mut counts: HashMap<MyThreadId, u32> = HashMap::new();
     
