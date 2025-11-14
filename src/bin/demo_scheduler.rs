@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use threadcity_demo::mypthreads::{
+use proyecto1::mypthreads::{
     my_thread_create,
     with_threads,
     with_threads_mut,
@@ -9,7 +9,7 @@ use threadcity_demo::mypthreads::{
     SchedulerType,
     ThreadState,
 };
-use threadcity_demo::scheduler;
+use proyecto1::scheduler;
 
 fn main() {
     println!("========================================");

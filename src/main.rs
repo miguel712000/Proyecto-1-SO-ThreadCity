@@ -16,8 +16,8 @@ use std::thread::{self, sleep};
 use crate::gui::{run_gui, SharedCity};
 
 fn run_simulation(city: SharedCity) {
-    // === LO QUE YA TENÍAS EN main, movido aquí ===
 
+    // === Estado inicial ===
     {
         let c = city.lock().unwrap();
         println!("=== Estado inicial de la ciudad ===");
@@ -25,7 +25,7 @@ fn run_simulation(city: SharedCity) {
         println!("===================================\n");
     }
 
-    // Crea carros
+    // Crear vehículos
     {
         let mut c = city.lock().unwrap();
         c.spawn_vehicle((0,0), (4,4), VehicleType::Car);
@@ -33,44 +33,24 @@ fn run_simulation(city: SharedCity) {
         c.spawn_vehicle((0,2), (4,2), VehicleType::Boat);
     }
 
-    
-
-
-    // 🚗 Crear un hilo simulado del tipo "Auto" usando mypthreads
-let city_clone = Arc::clone(&city);
-let _car_thread = my_thread_create(
-    move || {
-        for step_count in 0..20 {
-
-            let tid = my_thread_id();
-            {
-                let mut c = city_clone.lock().unwrap();
-
-                // Pequeña lógica de puente
-                if step_count == 5 {
-                    c.cross_bridge(VehicleType::Car, 1, tid);
-                }
-
-                let done = c.step(tid);
-                c.print_state();
-
-                if done {
-                    println!("🚗 El Auto llegó a su destino ✅");
-                    break;
-    // Crear un hilo simulado del tipo "Auto" usando mypthreads
-    let city_clone: Arc<Mutex<City>> = Arc::clone(&city);
+    // ================================
+    // CREAR HILO DEL AUTO
+    // ================================
+    let city_clone = Arc::clone(&city);
     let _car_thread = my_thread_create(
         move || {
             for step_count in 0..20 {
+
+                let tid = my_thread_id();
                 {
                     let mut c = city_clone.lock().unwrap();
 
                     // Pequeña lógica de puente
                     if step_count == 5 {
-                        c.cross_bridge(VehicleType::Car, 1);
+                        c.cross_bridge(VehicleType::Car, 1, tid);
                     }
 
-                    let done = c.step();
+                    let done = c.step(tid);
                     c.print_state();
 
                     if done {
@@ -78,31 +58,35 @@ let _car_thread = my_thread_create(
                         break;
                     }
                 }
+
                 std::thread::sleep(Duration::from_millis(300));
             }
-            std::thread::sleep(Duration::from_millis(300));
-        }
-    },
-    SchedulerType::RoundRobin, // ← tipo de planificación
-).unwrap();
+        },
+        SchedulerType::RoundRobin,
+    ).unwrap();
 
-
-    // 🧠 Bucle principal del planificador
+    // ================================
+    // BUCLE PRINCIPAL DEL SCHEDULER
+    // ================================
     loop {
         let mut all_done = false;
+
         if let Some(tid) = scheduler::scheduler_next() {
-            // Set the current thread ID before executing
+
             set_current_thread_id(tid);
+
             with_threads(|table| {
                 let t = &table[tid];
                 if let Some(f) = &t.start_routine {
-                    f(); // ejecuta el hilo elegido (el Auto)
+                    f();
                 }
             });
-            // Verifica si ya todos los vehículos llegaron
+
+            // Revisar si terminó
             let mut c = city.lock().unwrap();
-            all_done = c.step(tid); // si step() devuelve true, todos llegaron
+            all_done = c.step(tid);
         }
+
         if all_done {
             println!("🏁 Todos los vehículos llegaron, fin de la simulación.");
             break;
@@ -115,15 +99,16 @@ let _car_thread = my_thread_create(
 }
 
 fn main() {
+
     // Crear ciudad compartida
     let city: SharedCity = Arc::new(Mutex::new(City::new(5, 5)));
 
-    // Lanzar la simulación en un hilo del SO
+    // Lanzar la simulación
     let city_for_sim = city.clone();
     thread::spawn(move || {
         run_simulation(city_for_sim);
     });
 
-    // Lanzar la GUI GTK en el hilo principal
+    // Lanzar la GUI GTK
     run_gui(city);
 }
