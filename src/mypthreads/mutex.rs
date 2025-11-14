@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 
-use crate::mypthreads::{MyThreadId, my_thread_yield_};
+use crate::mypthreads::{my_thread_yield_, MyThreadId};
 
 /// Estructura que representa un mutex cooperativo de nuestra biblioteca.
 ///
