@@ -1,44 +1,49 @@
-use once_cell::sync::Lazy;
-use rand::{thread_rng, Rng};
-use std::sync::Mutex;
-
 use crate::mypthreads::{with_threads, MyThreadId, SchedulerType, ThreadState};
 
-static RUN_QUEUE: Lazy<Mutex<Vec<usize>>> = Lazy::new(|| Mutex::new(Vec::new()));
+mod util;
+mod rt;
+mod lottery;
+mod rr;
 
-/// Índice circular para Round Robin (sobre los candidatos READY de tipo RR).
-static RR_CURSOR: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
-
+/// Registrar un hilo en la cola.
+/// Push al RUN_QUEUE.
 pub fn scheduler_add(tid: usize) {
-    let mut rq = RUN_QUEUE.lock().unwrap();
-    rq.push(tid);
+    util::push_run_queue(tid);
 }
 
-/*
-// Por ahora: regresa el primero (round robin falso)
-pub fn scheduler_next() -> Option<usize> {
-    let mut rq = RUN_QUEUE.lock().unwrap();
-    if rq.is_empty() {
-        None
-    } else {
-        // versión tonta: quita y pone al final
-        let tid = rq.remove(0);
-        rq.push(tid);
-        Some(tid)
-    }
+/// Permite consultar desde fuera si ya "explotó" la planta.
+pub fn plant_exploded() -> bool {
+    util::exploded()
 }
-*/
 
-// Selecciona el próximo hilo a ejecutar (devuelve su ID) con prioridad:
-// 1) RealTime -> hilo READY con menor `deadline_ms`
-// 2) Lottery  -> sorteo ponderado por `tickets`
-// 3) RoundRobin -> rotación circular
+/// Revisa si algún hilo RT READY ya venció su deadline y marca "explosión".
+fn sweep_deadlines_and_flag() {
+    let now = util::now_ms();
+    // Sólo marcamos el flag; no cambiamos estados.
+    let miss = with_threads(|table| {
+        table.iter().any(|t|
+            t.state != ThreadState::Finished
+            && t.scheduler_type == SchedulerType::RealTime
+            && t.deadline_ms.is_some()
+            && t.deadline_ms.unwrap() <= now
+        )
+    });
+    if miss { util::mark_explosion(); }
+}
+
+/// Selecciona el próximo hilo a ejecutar (devuelve su ID) con prioridad:
+/// 1) RealTime  -> hilo READY con menor `deadline_ms`
+/// 2) Lottery   -> sorteo ponderado por `tickets`
+/// 3) RoundRobin-> rotación circular
 pub fn scheduler_next() -> Option<MyThreadId> {
-    // 1) Construir snapshot de candidatos READY por política bajo lock.
+
+    // Barrido de deadlines antes de decidir
+    sweep_deadlines_and_flag();
+    // 1) Snapshot de candidatos READY bajo lock (misma lógica que tenías).
     let (mut rt_ready, lot_ready, rr_ready) = with_threads(|table| {
         let mut rt: Vec<(usize, u64)> = Vec::new(); // (idx, deadline_ms)
         let mut lot: Vec<(usize, u32)> = Vec::new(); // (idx, tickets)
-        let mut rr: Vec<usize> = Vec::new(); // idx
+        let mut rr: Vec<usize> = Vec::new();         // idx
 
         for (idx, t) in table.iter().enumerate() {
             if t.state != ThreadState::Ready {
@@ -49,12 +54,12 @@ pub fn scheduler_next() -> Option<MyThreadId> {
                     if let Some(d) = t.deadline_ms {
                         rt.push((idx, d));
                     } else {
-                        // Si no tiene deadline, trátalo como RR.
+                        // Si no tiene deadline, trátalo como RR (igual que tu código).
                         rr.push(idx);
                     }
                 }
                 SchedulerType::Lottery => {
-                    // Asegurar al menos 1 ticket para participar.
+                    // Mantengo tu regla: si tickets == 0, usar 1.
                     let tickets = if t.tickets == 0 { 1 } else { t.tickets };
                     lot.push((idx, tickets));
                 }
@@ -67,42 +72,18 @@ pub fn scheduler_next() -> Option<MyThreadId> {
         (rt, lot, rr)
     });
 
-    // 2) Decisión fuera del lock (operaciones O(n) rápidas).
+    // 2) Decisión fuera del lock (idéntico a tu flujo):
 
     // --- Prioridad 1: Tiempo Real (menor deadline_ms) ---
-    if !rt_ready.is_empty() {
-        // Ordenar por deadline ascendente y tomar el primero.
-        rt_ready.sort_by_key(|&(_, d)| d);
-        return Some(rt_ready[0].0);
+    if let Some(tid) = rt::pick(&mut rt_ready) {
+        return Some(tid);
     }
 
     // --- Prioridad 2: Lottery (sorteo ponderado por tickets) ---
-    if !lot_ready.is_empty() {
-        let total: u64 = lot_ready.iter().map(|&(_, t)| t as u64).sum();
-        if total > 0 {
-            let pick = thread_rng().gen_range(0..total);
-            let mut acc: u64 = 0;
-            for (idx, tickets) in lot_ready {
-                acc += tickets as u64;
-                if pick < acc {
-                    return Some(idx);
-                }
-            }
-        }
-        // Si por alguna razón no se escogió (p.ej. total==0), caemos a RR.
+    if let Some(tid) = lottery::pick(lot_ready) {
+        return Some(tid);
     }
 
     // --- Prioridad 3: Round Robin (rotación circular) ---
-    if !rr_ready.is_empty() {
-        let mut cursor = RR_CURSOR.lock().expect("RR_CURSOR poisoned");
-        if *cursor >= rr_ready.len() {
-            *cursor = 0;
-        }
-        let chosen = rr_ready[*cursor];
-        *cursor = (*cursor + 1) % rr_ready.len();
-        return Some(chosen);
-    }
-
-    // No hay hilos READY.
-    None
+    rr::pick(rr_ready)
 }

@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 //use std::time::{SystemTime, UNIX_EPOCH};  //Importa tipos del módulo estándar de tiempo en Rust.
 use crate::scheduler;
 use once_cell::sync::Lazy;
@@ -29,7 +29,6 @@ pub enum SchedulerType {
 }
 
 /// Estructura que representa a **un hilo** dentro de la biblioteca.
-#[derive(Debug)]
 pub struct ThreadControlBlock {
     /// ID único del hilo dentro de la tabla.
     pub id: MyThreadId,
@@ -42,7 +41,7 @@ pub struct ThreadControlBlock {
     /// Si es `true`, el hilo no se puede esperar (`join`).
     pub detached: bool,
     /// Función que este hilo debe ejecutar cuando se le asigne CPU.
-    pub start_routine: Option<fn()>,
+    pub start_routine: Option<Arc<dyn Fn() + Send + Sync>>,
     // TODO: contexto real más adelante
 
     // Metadatos de scheduling
@@ -90,10 +89,14 @@ static CURRENT_THREAD_ID: Lazy<Mutex<Option<MyThreadId>>> = Lazy::new(|| Mutex::
 ///     let _ = my_thread_create(worker, SchedulerType::RoundRobin);
 /// }
 /// ```
-pub fn my_thread_create(
-    start_routine: fn(), // por ahora función sin args
+pub fn my_thread_create<F>(
+    start_routine: F, // puede ser fn o closure
     scheduler_type: SchedulerType,
-) -> Result<MyThreadId, &'static str> {
+) -> Result<MyThreadId, &'static str>
+where 
+    F: Fn() + Send + Sync + 'static,
+{
+
     let mut table = THREAD_TABLE.lock().unwrap();
 
     if table.len() >= MAX_THREADS {
@@ -108,8 +111,7 @@ pub fn my_thread_create(
         waiting_thread_id: None,
         scheduler_type,
         detached: false,
-        start_routine: Some(start_routine),
-
+        start_routine: Some(Arc::new(start_routine)),
 
         // Defaults de las propiedades para schedule
         tickets: 1,
@@ -286,6 +288,7 @@ where
     f(&*table)
 }
 
+
 /// Ejecuta una función con acceso mutable a la tabla de hilos.
 ///
 /// Útil para pruebas o para ajustar metadatos de scheduling (tickets, deadlines, etc.).
@@ -325,14 +328,14 @@ pub fn my_thread_set_deadline_ms(
 }
 
 /// Ejecuta la función asociada al hilo `tid`, si existe.
-/// 
+///
 /// Por ahora esto ejecuta la función de forma síncrona (sin cambio de contexto real),
 /// lo cual es suficiente para una simulación cooperativa básica.
 pub fn my_thread_run_once(tid: MyThreadId) {
     let maybe_func = {
         let table = THREAD_TABLE.lock().unwrap();
         if let Some(tcb) = table.get(tid) {
-            tcb.start_routine
+            tcb.start_routine.clone()
         } else {
             None
         }
