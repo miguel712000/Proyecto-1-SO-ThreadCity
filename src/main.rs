@@ -6,6 +6,8 @@ use proyecto1::mypthreads::{
     my_thread_create,
     with_threads,
     SchedulerType,
+    my_thread_id,
+    set_current_thread_id,
 };
 use proyecto1::scheduler;
 use std::sync::{Arc, Mutex};
@@ -31,6 +33,30 @@ fn run_simulation(city: SharedCity) {
         c.spawn_vehicle((0,2), (4,2), VehicleType::Boat);
     }
 
+    
+
+
+    // 🚗 Crear un hilo simulado del tipo "Auto" usando mypthreads
+let city_clone = Arc::clone(&city);
+let _car_thread = my_thread_create(
+    move || {
+        for step_count in 0..20 {
+
+            let tid = my_thread_id();
+            {
+                let mut c = city_clone.lock().unwrap();
+
+                // Pequeña lógica de puente
+                if step_count == 5 {
+                    c.cross_bridge(VehicleType::Car, 1, tid);
+                }
+
+                let done = c.step(tid);
+                c.print_state();
+
+                if done {
+                    println!("🚗 El Auto llegó a su destino ✅");
+                    break;
     // Crear un hilo simulado del tipo "Auto" usando mypthreads
     let city_clone: Arc<Mutex<City>> = Arc::clone(&city);
     let _car_thread = my_thread_create(
@@ -54,27 +80,29 @@ fn run_simulation(city: SharedCity) {
                 }
                 std::thread::sleep(Duration::from_millis(300));
             }
-        },
-        SchedulerType::RoundRobin,
-    ).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    },
+    SchedulerType::RoundRobin, // ← tipo de planificación
+).unwrap();
 
-    // Bucle principal del planificador
+
+    // 🧠 Bucle principal del planificador
     loop {
         let mut all_done = false;
-
         if let Some(tid) = scheduler::scheduler_next() {
+            // Set the current thread ID before executing
+            set_current_thread_id(tid);
             with_threads(|table| {
                 let t = &table[tid];
                 if let Some(f) = &t.start_routine {
                     f(); // ejecuta el hilo elegido (el Auto)
                 }
             });
-
             // Verifica si ya todos los vehículos llegaron
             let mut c = city.lock().unwrap();
-            all_done = c.step(); // si step() devuelve true, todos llegaron
+            all_done = c.step(tid); // si step() devuelve true, todos llegaron
         }
-
         if all_done {
             println!("🏁 Todos los vehículos llegaron, fin de la simulación.");
             break;
