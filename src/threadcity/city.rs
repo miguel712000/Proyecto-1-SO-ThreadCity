@@ -1,6 +1,8 @@
 // city.rs - tiny city model with very simple movement logic
-use std::sync::{Arc, Mutex};
-use crate::threadcity::entities::{Vehicle, VehicleType, Bridge};
+use crate::mypthreads::MyMutex;
+use crate::mypthreads::{my_mutex_lock, my_mutex_unlock, MyThreadId};
+use std::sync::{Arc};
+use crate::threadcity::entities::{Vehicle, VehicleType, Bridge, BridgeType};
 
 #[derive(Debug)]
 pub struct City {
@@ -14,10 +16,31 @@ pub struct City {
 impl City {
     pub fn new(width: usize, height: usize) -> Self {
         let bridges = vec![
-        Bridge { id: 1, name: String::from("Puente Norte"), mutex: Arc::new(Mutex::new(())) },
-        Bridge { id: 2, name: String::from("Puente Central"), mutex: Arc::new(Mutex::new(())) },
-        Bridge { id: 3, name: String::from("Puente Sur"), mutex: Arc::new(Mutex::new(())) },
-    ];
+    Bridge {
+        id: 1,
+        name: "Puente Norte".into(),
+        bridge_type: BridgeType::TrafficLight,
+        mutex: Arc::new(MyMutex::new()),
+        is_blocked: Arc::new(std::sync::Mutex::new(false)),
+        green_light: Arc::new(std::sync::Mutex::new(true)),
+    },
+    Bridge {
+        id: 2,
+        name: "Puente Central".into(),
+        bridge_type: BridgeType::YieldSign,
+        mutex: Arc::new(MyMutex::new()),
+        is_blocked: Arc::new(std::sync::Mutex::new(false)),
+        green_light: Arc::new(std::sync::Mutex::new(true)),
+    },
+    Bridge {
+        id: 3,
+        name: "Puente Sur".into(),
+        bridge_type: BridgeType::TwoLanes,
+        mutex: Arc::new(MyMutex::new()),
+        is_blocked: Arc::new(std::sync::Mutex::new(false)),
+        green_light: Arc::new(std::sync::Mutex::new(true)),
+    },
+];
 
         Self {
             width,
@@ -39,7 +62,7 @@ impl City {
         self.vehicles.push(v);
     }
 // step() devuelve un bool
-    pub fn step(&mut self) -> bool {
+    pub fn step(&mut self, tid: MyThreadId) -> bool {
     let mut all_arrived = true;
     let mut crossings = Vec::new(); // 👈 aquí guardaremos qué vehículos deben cruzar
 
@@ -66,8 +89,8 @@ impl City {
     // 🚗 Ya fuera del for (cuando no hay préstamos mutables)
     // ejecutamos los cruces
     for (vtype, bridge_id) in crossings {
-        self.cross_bridge(vtype, bridge_id);
-    }
+    self.cross_bridge(vtype, bridge_id, tid);  // Use bridge_id, not hardcoded 1
+}
 
     all_arrived
 }
@@ -96,49 +119,163 @@ impl City {
     println!("└{}┘", "─".repeat(self.width));
 }
 
-    pub fn cross_bridge(&self, vehicle_type: VehicleType, bridge_id: usize) {
-        let bridge = &self.bridges[bridge_id - 1]; // los puentes empiezan en 1
-        println!("{} quiere cruzar el {}", 
-            match vehicle_type {
-                VehicleType::Ambulance => "🚑 Ambulancia",
-                VehicleType::Car => "🚗 Auto",
-                VehicleType::Boat => "🛥️ Barco",
-                VehicleType::SupplyTruck => "🚚 Camión",
-            },
-            bridge.name
-        );
+pub fn cross_bridge(&self, vehicle_type: VehicleType, bridge_id: usize, tid: MyThreadId) {
+    let bridge = &self.bridges[bridge_id - 1];
+    
+    println!("{} quiere cruzar el {}", 
+        match vehicle_type {
+            VehicleType::Ambulance => "🚑 Ambulancia",
+            VehicleType::Car => "🚗 Auto",
+            VehicleType::Boat => "🛥️ Barco",
+            VehicleType::SupplyTruck => "🚚 Camión",
+        },
+        bridge.name
+    );
 
-        // Si es ambulancia, cruza primero (bloquea inmediatamente)
-        if vehicle_type == VehicleType::Ambulance {
-            let _lock = bridge.mutex.lock().unwrap();
-            println!("🚑 Ambulancia cruzando el {}", bridge.name);
+    // Different logic based on bridge type
+    match bridge.bridge_type {
+        BridgeType::TrafficLight => {
+            // BRIDGE 1: Traffic light + 1 lane
+            // Ambulances get immediate priority
+            if vehicle_type == VehicleType::Ambulance {
+                my_mutex_lock(&bridge.mutex, tid);
+                println!("🚑 Ambulancia cruzando {} (PRIORIDAD)", bridge.name);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                my_mutex_unlock(&bridge.mutex, tid).unwrap();
+                println!("🚑 Ambulancia salió del {}", bridge.name);
+                return;
+            }
+
+            // Wait for green light
+            loop {
+                let green = *bridge.green_light.lock().unwrap();
+                if green {
+                    break;
+                }
+                println!("🔴 {} esperando luz verde", 
+                    match vehicle_type {
+                        VehicleType::Car => "Auto",
+                        VehicleType::Boat => "Barco",
+                        VehicleType::SupplyTruck => "Camión",
+                        _ => "Vehículo",
+                    });
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            my_mutex_lock(&bridge.mutex,tid);
+            println!("🟢 {} cruzando {} (luz verde)", 
+                match vehicle_type {
+                    VehicleType::Car => "Auto",
+                    VehicleType::Boat => "Barco",
+                    VehicleType::SupplyTruck => "Camión",
+                    _ => "Vehículo",
+                },
+                bridge.name
+            );
             std::thread::sleep(std::time::Duration::from_millis(800));
-            println!("🚑 Ambulancia salió del {}", bridge.name);
-            return;
+            let _ = my_mutex_unlock(&bridge.mutex, tid);
+            println!("✅ Salió del {}", bridge.name);
         }
 
-        // Otros vehículos esperan el turno
-        let _lock = bridge.mutex.lock().unwrap();
-        println!("{} cruzando el {}", 
-            match vehicle_type {
-                VehicleType::Car => "🚗 Auto",
-                VehicleType::Boat => "🛥️ Barco",
-                VehicleType::SupplyTruck => "🚚 Camión",
-                VehicleType::Ambulance => "🚑 Ambulancia", // redundante pero seguro
-            },
-            bridge.name
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        println!("{} salió del {}", 
-            match vehicle_type {
-                VehicleType::Car => "🚗 Auto",
-                VehicleType::Boat => "🛥️ Barco",
-                VehicleType::SupplyTruck => "🚚 Camión",
-                VehicleType::Ambulance => "🚑 Ambulancia",
-            },
-            bridge.name
-        );
+        BridgeType::YieldSign => {
+            // BRIDGE 2: Yield sign + 1 lane
+            // Ambulances get priority
+            if vehicle_type == VehicleType::Ambulance {
+                my_mutex_lock(&bridge.mutex, tid);
+                println!("🚑 Ambulancia cruzando {} (PRIORIDAD)", bridge.name);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                 my_mutex_unlock(&bridge.mutex, tid).unwrap();
+                println!("🚑 Ambulancia salió del {}", bridge.name);
+                return;
+            }
+
+            // Yield = small delay before trying to cross
+            println!("⚠️ {} cediendo el paso en {}", 
+                match vehicle_type {
+                    VehicleType::Car => "Auto",
+                    VehicleType::Boat => "Barco",
+                    VehicleType::SupplyTruck => "Camión",
+                    _ => "Vehículo",
+                },
+                bridge.name
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            my_mutex_lock(&bridge.mutex,tid);
+            println!("➡️ {} cruzando {}", 
+                match vehicle_type {
+                    VehicleType::Car => "Auto",
+                    VehicleType::Boat => "Barco",
+                    VehicleType::SupplyTruck => "Camión",
+                    _ => "Vehículo",
+                },
+                bridge.name
+            );
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let _ = my_mutex_unlock(&bridge.mutex, tid);
+            println!("✅ Salió del {}", bridge.name);
+        }
+
+        BridgeType::TwoLanes => {
+            // BRIDGE 3: 2 lanes + boats block traffic
+            
+            // If it's a boat, BLOCK the bridge
+            if vehicle_type == VehicleType::Boat {
+                println!("⛵ Barco acercándose - BLOQUEANDO {}", bridge.name);
+                
+                // Block the bridge
+                *bridge.is_blocked.lock().unwrap() = true;
+                
+                my_mutex_lock(&bridge.mutex, tid);
+                println!("🚢 Barco pasando bajo {} (puente BLOQUEADO)", bridge.name);
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                
+                // Unblock
+                my_mutex_unlock(&bridge.mutex, tid).unwrap();
+                println!("✅ Barco pasó - {} libre nuevamente", bridge.name);
+                return;
+            }
+
+            // Wait if blocked by boat
+            loop {
+                let blocked = *bridge.is_blocked.lock().unwrap();
+                if !blocked {
+                    break;
+                }
+                println!("🛑 {} esperando - {} bloqueado por barco", 
+                    match vehicle_type {
+                        VehicleType::Car => "Auto",
+                        VehicleType::Ambulance => "Ambulancia",
+                        VehicleType::SupplyTruck => "Camión",
+                        _ => "Vehículo",
+                    },
+                    bridge.name
+                );
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            // Ambulances still get priority
+            if vehicle_type == VehicleType::Ambulance {
+                println!("🚑 Ambulancia cruzando {} (PRIORIDAD, 2 carriles)", bridge.name);
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                println!("🚑 Ambulancia salió del {}", bridge.name);
+                return;
+            }
+
+            // 2 lanes = faster crossing (no full lock needed)
+            println!("➡️➡️ {} cruzando {} (2 carriles)", 
+                match vehicle_type {
+                    VehicleType::Car => "Auto",
+                    VehicleType::SupplyTruck => "Camión",
+                    _ => "Vehículo",
+                },
+                bridge.name
+            );
+            std::thread::sleep(std::time::Duration::from_millis(600)); // Faster
+            println!("✅ Salió del {}", bridge.name);
+        }
     }
+}
 
 }
 

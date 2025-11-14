@@ -346,3 +346,13 @@ pub fn my_thread_run_once(tid: MyThreadId) {
         f();
     }
 }
+
+     pub fn my_thread_id() -> MyThreadId {
+         CURRENT_THREAD_ID.lock().unwrap().expect("No current thread is running")
+     }
+
+     /// Sets the ID of the currently running thread.
+/// This is used by the scheduler/main loop to update the global state.
+pub fn set_current_thread_id(tid: MyThreadId) {
+    *CURRENT_THREAD_ID.lock().unwrap() = Some(tid);
+}
